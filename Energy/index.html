@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <title>Wind Energy Rhythm</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+
+    <style>
+        body {
+            margin: 0;
+            font-family: Inter, Arial, sans-serif;
+            background: #07111f;
+            color: #e8eef7;
+        }
+
+        .wrap {
+            max-width: 1200px;
+            margin: 30px auto;
+            padding: 20px;
+        }
+
+        h1 {
+            margin-bottom: 4px;
+            font-size: 34px;
+            letter-spacing: 1px;
+        }
+
+        p {
+            margin-top: 0;
+            color: #94a3b8;
+        }
+
+        svg {
+            width: 100%;
+            height: auto;
+            border-radius: 24px;
+            background: linear-gradient(#06111f, #0d2436 55%, #07111f);
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.35);
+        }
+
+        .label {
+            fill: #cbd5e1;
+            font-size: 11px;
+        }
+
+        .small-label {
+            fill: #94a3b8;
+            font-size: 12px;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="wrap">
+        <h1>Wind Energy Rhythm</h1>
+        <p>Daily wind production shown as turbine height. Background color and wind streaks show average wind speed.</p>
+        <svg id="chart" viewBox="0 0 1200 620"></svg>
+    </div>
+
+    <script>
+        const energyFile = "energy.csv";
+        const weatherFile = "weather.csv";
+
+        const svg = d3.select("#chart");
+        const width = 1200;
+        const height = 620;
+
+        const margin = { top: 80, right: 70, bottom: 80, left: 70 };
+        const groundY = 500;
+
+        function cleanNumber(v) {
+            return +String(v)
+                .replace(",", ".")
+                .replace("%", "")
+                .trim();
+        }
+
+        function dayKey(date) {
+            return d3.timeFormat("%Y-%m-%d")(date);
+        }
+
+        Promise.all([
+            d3.dsv(";", energyFile, d => ({
+                time: new Date(d.startTime),
+                wind: cleanNumber(d.wind)
+            })),
+
+            d3.csv(weatherFile, d => ({
+                time: new Date(d.time),
+                windSpeed: cleanNumber(d.windSpeed)
+            }))
+        ]).then(([energy, weather]) => {
+
+            const weatherMap = new Map(
+                weather.map(d => [d.time.getTime(), d])
+            );
+
+            const hourly = energy
+                .map(d => {
+                    const w = weatherMap.get(d.time.getTime());
+
+                    return {
+                        time: d.time,
+                        date: dayKey(d.time),
+                        wind: d.wind,
+                        windSpeed: w ? w.windSpeed : NaN
+                    };
+                })
+                .filter(d =>
+                    !isNaN(d.wind) &&
+                    !isNaN(d.windSpeed)
+                );
+
+            const daily = Array.from(
+                d3.rollup(
+                    hourly,
+                    v => ({
+                        date: new Date(v[0].date),
+                        windTotal: d3.sum(v, d => d.wind),
+                        windSpeedAvg: d3.mean(v, d => d.windSpeed)
+                    }),
+                    d => d.date
+                ),
+                ([date, values]) => values
+            ).sort((a, b) => d3.ascending(a.date, b.date));
+
+            draw(daily);
+        });
+
+        function draw(data) {
+            const x = d3.scalePoint()
+                .domain(data.map(d => d.date))
+                .range([margin.left, width - margin.right])
+                .padding(0.5);
+
+            const towerHeight = d3.scaleLinear()
+                .domain([0, d3.max(data, d => d.windTotal)])
+                .range([80, 340]);
+
+            const windSpeedColor = d3.scaleSequential()
+                .domain(d3.extent(data, d => d.windSpeedAvg))
+                .interpolator(d3.interpolateBlues);
+
+            const windIntensity = d3.scaleLinear()
+                .domain(d3.extent(data, d => d.windSpeedAvg))
+                .range([0.15, 1]);
+
+            // background wind-speed bands
+            const step = x(data[1].date) - x(data[0].date);
+
+            data.forEach(d => {
+                const cx = x(d.date);
+
+                svg.append("rect")
+                    .attr("x", cx - step / 2)
+                    .attr("y", margin.top - 20)
+                    .attr("width", step)
+                    .attr("height", groundY - margin.top + 20)
+                    .attr("fill", windSpeedColor(d.windSpeedAvg))
+                    .attr("opacity", 0.28);
+            });
+            // wind streaks
+            data.forEach(d => {
+                const n = Math.round(windIntensity(d.windSpeedAvg) * 10);
+
+                d3.range(n).forEach(() => {
+
+                    const x0 = x(d.date) + (Math.random() - 0.5) * 60;
+                    const y0 = 80 + Math.random() * 320;
+
+                    svg.append("line")
+                    .attr("x1", x0)
+                    .attr("x2", x0 + 20 + Math.random() * 50)
+                    .attr("y1", y0)
+                    .attr("y2", y0 + (Math.random() - 0.5) * 12)
+                    .attr("stroke", "white")
+                    .attr("stroke-width", Math.random() * 1.5)
+                    .attr("opacity", 0.03 + Math.random() * 0.12)
+                    .attr("stroke-linecap", "round");
+                });
+            });
+
+            // ground line
+            svg.append("line")
+                .attr("x1", margin.left)
+                .attr("x2", width - margin.right)
+                .attr("y1", groundY)
+                .attr("y2", groundY)
+                .attr("stroke", "#193750")
+                .attr("stroke-width", 1.5)
+                .attr("opacity", 0.75);
+
+            // turbines
+            const turbines = svg.selectAll(".turbine")
+                .data(data)
+                .enter()
+                .append("g")
+                .attr("class", "turbine")
+                .attr("transform", d => `translate(${x(d.date)},${groundY})`);
+
+            turbines.each(function (d, i) {
+                const g = d3.select(this);
+
+                const h = towerHeight(d.windTotal);
+                const hubY = -h;
+                const bladeR = 27;
+                const fixedRotation = 60;
+
+                // tower
+                g.append("path")
+                    .attr("d", `
+                        M -5 0
+                        L -2 ${hubY}
+                        L 2 ${hubY}
+                        L 5 0
+                        Z
+                    `)
+                    .attr("fill", "#dbeafe")
+                    .attr("opacity", 0.92);
+
+                // middle-back
+                g.append("rect")
+                    .attr("x", -4)
+                    .attr("y", hubY - 4)
+                    .attr("width", 14)
+                    .attr("height", 8)
+                    .attr("rx", 4)
+                    .attr("fill", "#e2e8f0");
+
+                // middle
+                g.append("circle")
+                    .attr("cx", 0)
+                    .attr("cy", hubY)
+                    .attr("r", 6)
+                    .attr("fill", "#f8fafc");
+
+                // blades
+                const blades = g.append("g")
+                    .attr("transform", `translate(0,${hubY}) rotate(${fixedRotation})`);
+
+                for (let b = 0; b < 3; b++) {
+                    const blade = blades.append("g")
+                        .attr("transform", `rotate(${b * 120})`);
+
+                    blade.append("path")
+                        .attr("d", `
+                            M 0 0
+                            L ${bladeR} -4
+                            L ${bladeR - 8} 0
+                            L 0 4
+                            Z
+                            `)
+                        .attr("fill", "#f8fafc")
+                        .attr("opacity", 0.95);
+                }
+
+                // day label
+                g.append("text")
+                    .attr("class", "label")
+                    .attr("x", 0)
+                    .attr("y", 18)
+                    .attr("text-anchor", "middle")
+                    .text(d3.timeFormat("%d")(d.date));
+            });
+        }
+    </script>
+</body>
+
+</html>
