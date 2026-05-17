@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="utf-8" />
+    <title>Helsinki Population Interactive</title>
+
+    <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+
+    <style>
+        body {
+            margin: 0;
+            font-family: sans-serif;
+        }
+
+        #map {
+            height: 850px;
+        }
+
+        .controls {
+            padding: 10px;
+            background: white;
+        }
+
+        .leaflet-tile {
+            transform: translateZ(0) scale(1.001);
+        }
+    </style>
+</head>
+
+<body>
+
+    <div class="controls">
+        Hour:
+        <input type="range" id="hourSlider" min="0" max="23" value="9">
+        <span id="hourLabel">9</span>
+
+        Day:
+        <select id="daySelect">
+            <option value="weekday">Weekday</option>
+            <option value="saturday">Saturday</option>
+            <option value="sunday">Sunday</option>
+        </select>
+    </div>
+
+    <div id="map"></div>
+
+    <script>
+
+        // -----------------------------
+        // 1. BASEMAP
+        // -----------------------------
+        const map = L.map('map', {
+            renderer: L.canvas(),
+            zoomSnap: 1,
+            zoomDelta: 1,
+            zoomAnimation: false,
+            fadeAnimation: false,
+            markerZoomAnimation: false
+        }).setView([60.21, 25.01], 11);
+
+        L.tileLayer(
+        "https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}.png",
+        {
+            attribution: '&copy; OpenStreetMap & CartoDB',
+            subdomains: "abcd",
+            maxZoom: 19
+        }
+        ).addTo(map);
+
+        // -----------------------------
+        // 2. GLOBAL STATE
+        // -----------------------------
+        let geojsonLayer;
+        let geoData;
+
+        let colorScale;
+
+        function buildColorScale() {
+            const values = [];
+
+            geoData.features.forEach(feature => {
+                for (let h = 0; h < 24; h++) {
+                    const v = Number(feature.properties["H" + h]) || 0;
+                    if (v > 0) values.push(v);
+                }
+            });
+
+            values.sort((a, b) => a - b);
+
+            const maxValue = d3.quantile(values, 0.98);
+
+            colorScale = d3.scaleSequential(t => d3.interpolateInferno(0.05 + t * 0.95))
+                .domain([0, maxValue]);
+        }
+
+        function getColor(value) {
+            if (!value || value <= 0) {
+                return "transparent";
+            }
+
+            return colorScale(value);
+        }
+
+
+        // -----------------------------
+        // 3. LOAD DATA
+        // -----------------------------
+        fetch("helsinki_population.geojson")
+            .then(res => res.json())
+            .then(data => {
+                geoData = data;
+                buildColorScale();
+                drawLayer();
+            });
+
+        // -----------------------------
+        // 4. STYLE FUNCTION
+        // -----------------------------
+        function getValue(feature) {
+            const hour = document.getElementById("hourSlider").value;
+            const day = document.getElementById("daySelect").value;
+
+            if (feature.properties.day_type !== day) return 0;
+
+            return feature.properties["H" + hour] || 0;
+        }
+
+        function style(feature) {
+            const value = getValue(feature);
+
+            return {
+                fillColor: getColor(value),
+                weight: 0,
+                fillOpacity: value > 0 ? 0.95 : 0
+            };
+        }
+
+        // -----------------------------
+        // 5. DRAW LAYER
+        // -----------------------------
+        function drawLayer() {
+            geojsonLayer = L.geoJSON(geoData, {
+                style: style,
+                renderer: L.canvas()
+            }).addTo(map);
+        }
+
+        // -----------------------------
+        // 6. UPDATE FUNCTION
+        // -----------------------------
+        function update() {
+            document.getElementById("hourLabel").innerText =
+                document.getElementById("hourSlider").value;
+
+            geojsonLayer.setStyle(style);
+        }
+
+        // -----------------------------
+        // 7. EVENTS
+        // -----------------------------
+        document.getElementById("hourSlider").addEventListener("input", update);
+        document.getElementById("daySelect").addEventListener("change", update);
+
+    </script>
+
+</body>
+
+</html>
